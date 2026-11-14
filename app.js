@@ -1,6 +1,6 @@
 // ConditionChecklist PWA - Phase 1: inspections, rooms, items, photos; everything offline in IndexedDB.
 "use strict";
-const VERSION = "0.4.3";
+const VERSION = "0.5";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -30,7 +30,8 @@ async function tx(store, mode, fn) {
 const req = r => new Promise((ok, bad) => { r.onsuccess = () => ok(r.result); r.onerror = () => bad(r.error); });
 const getAll = () => tx("inspections", "readonly", s => req(s.getAll()));
 const getInsp = id => tx("inspections", "readonly", s => req(s.get(id)));
-const putInsp = i => { i.updatedAt = new Date().toISOString(); return tx("inspections", "readwrite", s => req(s.put(i))); };
+const putInsp = i => { i.updatedAt = new Date().toISOString(); return tx("inspections", "readwrite", s => req(s.put(i))).then(r => { scheduleSync(); return r; }); };
+const rawPut = i => tx("inspections", "readwrite", s => req(s.put(i))); // save without counting as an edit
 const getPhoto = id => tx("photos", "readonly", s => req(s.get(id)));
 const putPhoto = p => tx("photos", "readwrite", s => req(s.put(p)));
 const delPhoto = id => tx("photos", "readwrite", s => req(s.delete(id)));
@@ -162,7 +163,7 @@ async function viewList() {
     ${list.map(i => {
       const all = allItems(i), done = all.filter(x => x.item.cond).length;
       return `<div class="card" onclick="location.hash='#/i/${i.id}'" style="cursor:pointer">
-        <div class="row"><span class="badge ${i.type === "Move-in" ? "in" : "out"}">${esc(i.type)}</span><b class="grow">${esc(short(i.address))}</b><span class="muted">${esc(i.date)}</span></div>
+        <div class="row"><span class="badge ${i.type === "Move-in" ? "in" : "out"}">${esc(i.type)}</span><b class="grow">${esc(short(i.address))}</b><span class="muted">${cloud() ? (synced(i) ? "☁✓ " : "☁… ") : ""}${esc(i.date)}</span></div>
         <div class="muted">${esc(i.unit ? "Unit " + i.unit + " · " : "")}${esc(i.tenant || "")}</div>
         <div class="prog">${done} / ${all.length} items checked</div><div class="bar"><i style="width:${all.length ? 100 * done / all.length : 0}%"></i></div></div>`;
     }).join("")}
@@ -239,7 +240,7 @@ async function viewInspection(id) {
   setHeader(`${i.type} · ${short(i.address)}`, "#/");
   $("#view").innerHTML = `<div class="card"><div class="row"><span class="badge ${i.type === "Move-in" ? "in" : "out"}">${esc(i.type)}</span><b class="grow">${esc(i.address)}</b></div>
       <div class="muted">${esc(i.date)} · ${esc(i.tenant || "no tenant name")} · by ${esc(i.inspector || "?")}${i.linkedMoveIn ? " · compared with move-in" : ""}</div>
-      ${exportState(i) === "changed" ? `<div class="warn noprint">Changed since last export (${esc(fmtTime(i.exportedAt))}) - export again so the office has the latest.</div>`
+      ${cloud() ? `<div id="drive" class="noprint">${driveLine(i)}</div>` : exportState(i) === "changed" ? `<div class="warn noprint">Changed since last export (${esc(fmtTime(i.exportedAt))}) - export again so the office has the latest.</div>`
         : exportState(i) === "ok" ? `<div class="muted noprint">Exported ${esc(fmtTime(i.exportedAt))} ✓</div>` : `<div class="muted noprint">Not exported yet.</div>`}
       <div class="row noprint" style="margin-top:8px"><button class="grow" onclick="location.hash='#/i/${i.id}/report'">Report</button><button class="grow" id="export2">Export .zip</button></div></div>
     ${i.rooms.map(r => { const d = itemsDone(r), n = r.items.length;
@@ -261,6 +262,7 @@ async function viewInspection(id) {
     await putInsp(i); viewInspection(id);
   };
   $("#export").onclick = $("#export2").onclick = () => exportZip(i);
+  if ($("#syncnow")) $("#syncnow").onclick = () => syncAll(true);
   $("#del").onclick = async () => {
     if (prompt(`Type DELETE to remove this inspection and its photos from this phone.`) !== "DELETE") return;
     for (const p of await photosOf(i.id)) await delPhoto(p.id);
@@ -357,7 +359,7 @@ async function viewReport(id) {
   $("#view").innerHTML = `<div class="card"><h2 style="margin:0">${esc(i.type)} Inspection</h2>
     <p>${esc(i.address)}${i.unit ? ", Unit " + esc(i.unit) : ""}<br>Tenant: ${esc(i.tenant)}<br>Date: ${esc(i.date)} · Inspected by: ${esc(i.inspector)}${m ? `<br>Move-in inspection: ${esc(m.date)}` : ""}</p>
     ${hasCost(i) ? `<p><b>Total cost to correct: $${total.toFixed(2)}</b></p>` : ""}
-    <div class="row noprint"><button class="primary" onclick="print()">Print / Save as PDF</button><button id="rexport">Export .zip</button></div></div>
+    <div class="row noprint"><button class="primary" onclick="print()">Print / Save as PDF</button><button id="rexport">Export .zip</button></div>${i.reportUrl ? `<p class="noprint"><a href="${esc(i.reportUrl)}" target="_blank" rel="noopener">Open the report PDF</a> (office review, then print, sign and mail)</p>` : ""}</div>
     ${i.rooms.map(r => `<div class="card"><h3>${esc(r.name)}</h3>${r.items.map(it => { const p = prior(it); return `<div class="item"><b>${esc(it.name)}</b>: ${esc(it.cond || "—")}
       ${p ? ` <span class="muted">(move-in: ${esc(p.cond || "—")})</span>` : ""}${it.note ? `<div>${esc(it.note)}</div>` : ""}${it.cost ? `<div>Cost: $${esc(it.cost)}</div>` : ""}
       <div class="thumbs">${it.photos.map(ph => `<img data-ph="${ph}">`).join("")}</div></div>`; }).join("")}</div>`).join("")}`;
@@ -390,6 +392,73 @@ async function exportZip(i) {
   const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); await mark();
 }
 
+// ---------------------------------------------------------------- Phase 2: upload to Google Drive (ewpm805 / My Drive / ConditionCheck)
+// Each inspection -> ConditionCheck/<address>/<date> <type> (<id>)/: inspection.json, photos/<room>/<item>-n.jpg,
+// and a Google Docs report. Uploads run when online, ~1 min after the last edit, on app open and on "Upload now".
+// Nothing is ever sent to tenants: the office reviews, confirms, signs, prints and mails.
+let syncing = false, syncTimer = null, syncMsg = {};
+function synced(i) { return !!i.syncedAt && i.updatedAt <= i.syncedAt; }
+function scheduleSync(ms = 60000) { if (!cloud()) return; clearTimeout(syncTimer); syncTimer = setTimeout(() => syncAll(), ms); }
+function driveLine(i) {
+  if (syncMsg[i.id]) return `<div class="muted">${esc(syncMsg[i.id])}</div>`;
+  if (synced(i)) return `<div class="muted">Saved to Google Drive ✓ ${esc(fmtTime(i.syncedOn))}${i.driveUrl ? ` · <a href="${esc(i.driveUrl)}" target="_blank" rel="noopener">Folder</a>` : ""}${i.reportUrl ? ` · <a href="${esc(i.reportUrl)}" target="_blank" rel="noopener">Report</a>` : ""}</div>`;
+  const why = !navigator.onLine ? "Waiting for internet to upload to Google Drive." : i.syncError ? `Upload problem (${esc(i.syncError)}) - will retry.` : "Will upload to Google Drive shortly.";
+  return `<div class="warn">${why} <button id="syncnow" style="margin-left:6px;padding:2px 10px">Upload now</button></div>`;
+}
+function paintDrive(id) {
+  const el = document.getElementById("drive"); if (!el || !location.hash.startsWith(`#/i/${id}`)) return;
+  getInsp(id).then(i => { if (!i) return; el.innerHTML = driveLine(i); const b = document.getElementById("syncnow"); if (b) b.onclick = () => syncAll(true); });
+}
+const blobToB64 = b => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(String(r.result).split(",")[1]); r.onerror = () => bad(r.error); r.readAsDataURL(b); });
+async function payloadOf(i) {
+  const safe = s => String(s).replace(/[\\/:*?"<>|#]+/g, "-").trim() || "-";
+  const photoFiles = {};
+  for (const r of i.rooms) for (const it of r.items) it.photos.forEach((pid, n) => photoFiles[pid] = `${safe(r.name)}/${safe(it.name)}-${n + 1}.jpg`);
+  const out = { ...i, photoFiles };
+  delete out.syncError; delete out.syncedAt; delete out.syncedOn;
+  const m = i.linkedMoveIn && await getInsp(i.linkedMoveIn);
+  if (m) {
+    const prior = Object.fromEntries(m.rooms.flatMap(r => r.items).map(x => [x.id, x]));
+    out.linkedMoveInDate = m.date;
+    out.rooms = i.rooms.map(r => ({ ...r, items: r.items.map(it => { const p = prior[it.linkItem]; return p ? { ...it, priorCond: p.cond || "", priorNote: p.note || "" } : it; }) }));
+  }
+  return out;
+}
+async function syncOne(i) {
+  const startedAt = i.updatedAt, say = t => { syncMsg[i.id] = t; paintDrive(i.id); };
+  say("Uploading to Google Drive…");
+  const p = await payloadOf(i);
+  const r = await callCloud("saveInspection", { insp: p });
+  let n = 0;
+  for (const pid of r.missing) {
+    say(`Uploading photos to Google Drive… ${++n} / ${r.missing.length}`);
+    const ph = await getPhoto(pid); if (!ph) continue;
+    await callCloud("uploadPhoto", { folderId: r.folderId, pid, path: p.photoFiles[pid], data: await blobToB64(ph.blob) });
+  }
+  say("Building the report PDF…");
+  const rep = await callCloud("report", { folderId: r.folderId });
+  const cur = await getInsp(i.id); if (!cur) return;
+  Object.assign(cur, { driveFolderId: r.folderId, driveUrl: r.folderUrl, reportUrl: rep.reportUrl || cur.reportUrl, syncedAt: startedAt, syncedOn: new Date().toISOString() });
+  delete cur.syncError; await rawPut(cur);
+}
+async function syncAll(manual) {
+  if (syncing || !cloud()) return;
+  if (!navigator.onLine) { if (manual) toast("No internet - it will upload when you are back online"); return; }
+  syncing = true; let failed = false;
+  try {
+    for (const i of await getAll()) {
+      if (synced(i)) continue;
+      try { await syncOne(i); }
+      catch (e) { failed = true; const cur = await getInsp(i.id); if (cur) { cur.syncError = String(e.message || e).slice(0, 80); await rawPut(cur); } }
+      finally { delete syncMsg[i.id]; paintDrive(i.id); }
+    }
+  } finally { syncing = false; }
+  if (manual) toast(failed ? "Some uploads failed - will retry" : "Saved to Google Drive ✓");
+  const left = (await getAll()).some(i => !synced(i));
+  if (left) scheduleSync(failed ? 5 * 60000 : 60000);
+  if (location.hash === "#/" || location.hash === "") route();
+}
+
 // ---------------------------------------------------------------- router, offline, install
 async function route() {
   const p = location.hash.replace(/^#\/?/, "").split("/");
@@ -405,6 +474,8 @@ async function route() {
 function net() { $("#net").textContent = navigator.onLine ? "● online" : "○ offline"; }
 addEventListener("hashchange", route); addEventListener("online", net); addEventListener("offline", net);
 net(); route();
-refreshCompany().catch(() => {}); addEventListener("online", () => refreshCompany().catch(() => {}));
+refreshCompany().catch(() => {}); addEventListener("online", () => { refreshCompany().catch(() => {}); syncAll(); });
+setTimeout(() => syncAll(), 3000);
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") syncAll(); }); // closing the app
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 navigator.storage?.persist?.(); // ask the browser not to evict saved inspections/photos
