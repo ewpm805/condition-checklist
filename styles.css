@@ -42,3 +42,5 @@ textarea{min-height:60px}
 .item .itemname{color:var(--ink);font-weight:600;font-size:16px;border:1px solid transparent;background:transparent;padding:4px 2px;margin:0 0 6px}
 .item .itemname:focus{border-color:var(--accent);background:var(--card)}
 .item button.icon{color:#999;font-size:18px;padding:0 6px;margin-bottom:6px}
+.warn{background:#fff4d6;color:#7a5200;border:1px solid #f0d58a;border-radius:8px;padding:6px 8px;margin-top:6px;font-size:14px}
+@media (prefers-color-scheme:dark){.warn{background:#3a2f12;color:#f3d58a;border-color:#6b5520}}

@@ -1,6 +1,6 @@
 // ConditionChecklist PWA - Phase 1: inspections, rooms, items, photos; everything offline in IndexedDB.
 "use strict";
-const VERSION = "0.4.2";
+const VERSION = "0.4.3";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -132,6 +132,9 @@ function datalist(id, values) { return `<datalist id="${id}">${[...new Set(value
 const GENERIC_ITEMS = ["Floor / Coverings", "Walls / Coverings", "Ceiling", WIN, "Lighting", "Electrical outlets"];
 function customRoom(name) { return { id: uid(), type: "custom", name, items: GENERIC_ITEMS.map(n => ({ id: uid(), name: n, cond: "", note: "", cost: "", photos: [] })) }; }
 const hasCost = i => i.type !== "Move-in";
+// Export status: "never" (nothing exported yet), "changed" (edited after the last export), "ok".
+function exportState(i) { return !i.exportedAt ? "never" : (i.updatedAt > i.exportedAt ? "changed" : "ok"); }
+function fmtTime(iso) { return new Date(iso).toLocaleString([], { month: "numeric", day: "numeric", hour: "numeric", minute: "2-digit" }); }
 
 function itemsDone(room) { return room.items.filter(i => i.cond).length; }
 function allItems(insp) { return insp.rooms.flatMap(r => r.items.map(i => ({ room: r, item: i }))); }
@@ -236,6 +239,8 @@ async function viewInspection(id) {
   setHeader(`${i.type} · ${short(i.address)}`, "#/");
   $("#view").innerHTML = `<div class="card"><div class="row"><span class="badge ${i.type === "Move-in" ? "in" : "out"}">${esc(i.type)}</span><b class="grow">${esc(i.address)}</b></div>
       <div class="muted">${esc(i.date)} · ${esc(i.tenant || "no tenant name")} · by ${esc(i.inspector || "?")}${i.linkedMoveIn ? " · compared with move-in" : ""}</div>
+      ${exportState(i) === "changed" ? `<div class="warn noprint">Changed since last export (${esc(fmtTime(i.exportedAt))}) - export again so the office has the latest.</div>`
+        : exportState(i) === "ok" ? `<div class="muted noprint">Exported ${esc(fmtTime(i.exportedAt))} ✓</div>` : `<div class="muted noprint">Not exported yet.</div>`}
       <div class="row noprint" style="margin-top:8px"><button class="grow" onclick="location.hash='#/i/${i.id}/report'">Report</button><button class="grow" id="export2">Export .zip</button></div></div>
     ${i.rooms.map(r => { const d = itemsDone(r), n = r.items.length;
       return `<div class="card room" onclick="location.hash='#/i/${i.id}/r/${r.id}'" style="cursor:pointer"><div class="grow"><b>${esc(r.name)}</b>
@@ -370,10 +375,19 @@ async function exportZip(i) {
   for (const p of await photosOf(i.id)) if (map[p.id]) z.file(map[p.id], p.blob);
   z.file("inspection.json", JSON.stringify({ ...i, photoFiles: map }, null, 2));
   const blob = await z.generateAsync({ type: "blob" });
-  const name = `${i.date}-${i.type.toLowerCase()} condition - ${safe(short(i.address))}.zip`;
+  const now = new Date(), hhmm = String(now.getHours()).padStart(2, "0") + String(now.getMinutes()).padStart(2, "0");
+  const name = `${i.date}-${i.type.toLowerCase()} condition - ${safe(short(i.address))} (exported ${hhmm}).zip`;
   const file = new File([blob], name, { type: "application/zip" });
-  if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: name }); return; } catch {} }
-  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  const mark = async () => { // remember when it was exported (without counting as an edit)
+    const cur = await getInsp(i.id); cur.exportedAt = new Date().toISOString();
+    await tx("inspections", "readwrite", st => req(st.put(cur))); i.exportedAt = cur.exportedAt;
+    if (location.hash === `#/i/${i.id}`) viewInspection(i.id);
+  };
+  if (navigator.canShare?.({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); await mark(); return; }
+    catch (e) { if (e.name === "AbortError") return; }
+  }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); await mark();
 }
 
 // ---------------------------------------------------------------- router, offline, install
