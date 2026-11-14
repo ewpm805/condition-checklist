@@ -38,3 +38,7 @@ textarea{min-height:60px}
 .viewer{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px}
 .viewer img{max-width:100%;max-height:80vh}
 @media print{header,button,.noprint{display:none!important}body{background:#fff;color:#000}.card{border:0;padding:0}}
+/* v0.4: editable item names + remove button inside rooms */
+.item .itemname{color:var(--ink);font-weight:600;font-size:16px;border:1px solid transparent;background:transparent;padding:4px 2px;margin:0 0 6px}
+.item .itemname:focus{border-color:var(--accent);background:var(--card)}
+.item button.icon{color:#999;font-size:18px;padding:0 6px;margin-bottom:6px}

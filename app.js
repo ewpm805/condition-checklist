@@ -1,6 +1,6 @@
 // ConditionChecklist PWA - Phase 1: inspections, rooms, items, photos; everything offline in IndexedDB.
 "use strict";
-const VERSION = "0.3.1";
+const VERSION = "0.4";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -119,6 +119,14 @@ async function viewSettings() {
   };
 }
 
+// Typed-in values are remembered on the phone and offered as suggestions next time.
+function typed(kind) { try { return JSON.parse(localStorage.getItem("typed_" + kind) || "[]"); } catch { return []; } }
+function rememberTyped(kind, v) { v = (v || "").trim(); if (!v) return; const l = typed(kind).filter(x => x.toLowerCase() !== v.toLowerCase()); l.unshift(v); localStorage.setItem("typed_" + kind, JSON.stringify(l.slice(0, 50))); }
+function datalist(id, values) { return `<datalist id="${id}">${[...new Set(values)].map(v => `<option value="${esc(v)}">`).join("")}</datalist>`; }
+const GENERIC_ITEMS = ["Floor / Coverings", "Walls / Coverings", "Ceiling", WIN, "Lighting", "Electrical outlets"];
+function customRoom(name) { return { id: uid(), type: "custom", name, items: GENERIC_ITEMS.map(n => ({ id: uid(), name: n, cond: "", note: "", cost: "", photos: [] })) }; }
+const hasCost = i => i.type !== "Move-in";
+
 function itemsDone(room) { return room.items.filter(i => i.cond).length; }
 function allItems(insp) { return insp.rooms.flatMap(r => r.items.map(i => ({ room: r, item: i }))); }
 function short(addr) { return (addr || "").split(",")[0]; }
@@ -158,7 +166,8 @@ async function viewNew() {
   const opt = CHECKLIST.filter(t => t.optional);
   const props = propertyList(all), lastInsp = localStorage.getItem("inspector") || "";
   $("#view").innerHTML = `<div class="card">
-    <label>Type</label><div class="seg" id="type"><button data-v="Move-in" class="on" style="background:var(--accent);color:#fff">Move-in</button><button data-v="Move-out">Move-out</button></div>
+    <label>Type</label><div class="seg" id="type"><button data-v="Move-in" class="on" style="background:var(--accent);color:#fff">Move-in</button><button data-v="Move-out">Move-out</button><button data-v="__other">Other…</button></div>
+    <input id="typeother" list="dl-type" placeholder="Type of inspection, e.g. Periodic / Annual" hidden style="margin-top:6px">${datalist("dl-type", ["Periodic", "Annual", "Pre-listing", ...typed("type")])}
     <label>Property address</label>
     <select id="addrpick"><option value="">${props.length ? "Select a property…" : "No property list yet - type below"}</option>${props.map(a => `<option>${esc(a)}</option>`).join("")}</select>
     ${cloud() ? "" : `<p class="muted" style="margin:4px 0">Company list not connected on this phone. Open the link in the ConditionChecklist Sheet (tab Connect) once. <a href="#/settings">Settings</a></p>`}
@@ -173,6 +182,7 @@ async function viewNew() {
     <div class="row"><div class="grow"><label>Bedrooms</label><input id="bedrooms" type="number" min="0" max="10" value="3" inputmode="numeric"></div>
     <div class="grow"><label>Bathrooms</label><input id="bathrooms" type="number" min="0" max="10" value="2" inputmode="numeric"></div></div>
     <label>Also include</label><div class="seg" id="opt">${opt.map(t => `<button data-v="${t.type}" class="${t.type === "dining" || t.type === "garage" ? "on" : ""}">${esc(t.name)}</button>`).join("")}</div>
+    <input id="otherrooms" list="dl-room" placeholder="Other rooms - type, separate with commas (e.g. Den, Loft)" style="margin-top:6px">${datalist("dl-room", ["Den", "Loft", "Office", "Bonus room", "Hallway", "Balcony", "Patio", "Basement", "Attic", "Storage", ...typed("room")])}
     <div id="linkbox" hidden><label>Compare with move-in inspection</label><select id="link"><option value="">(none)</option>
       ${ins.map(i => `<option value="${i.id}">${esc(short(i.address))} · ${esc(i.date)} · ${esc(i.tenant || "")}</option>`).join("")}</select></div>
     <div class="row" style="margin-top:14px"><button class="primary grow" id="create">Start inspection</button></div></div>`;
@@ -187,6 +197,7 @@ async function viewNew() {
     if (!e.target.dataset.v) return;
     document.querySelectorAll("#type button").forEach(b => { b.classList.toggle("on", b === e.target); b.style.cssText = b === e.target ? "background:var(--accent);color:#fff" : ""; });
     $("#linkbox").hidden = e.target.dataset.v !== "Move-out";
+    $("#typeother").hidden = e.target.dataset.v !== "__other"; if (e.target.dataset.v === "__other") $("#typeother").focus();
   };
   $("#link").onchange = async () => { // copy room layout from the move-in so items line up
     const m = await getInsp($("#link").value); if (!m) return;
@@ -197,7 +208,9 @@ async function viewNew() {
     const address = $("#address").value.trim(); if (!address) return toast("Select or type the property address");
     const inspector = $("#inspsel").value === "__other" ? $("#inspector").value.trim() : $("#inspsel").value;
     if (!inspector) return toast("Enter who is inspecting");
-    const type = $("#type .on").dataset.v, link = type === "Move-out" ? $("#link").value : "";
+    let type = $("#type .on").dataset.v;
+    if (type === "__other") { type = $("#typeother").value.trim(); if (!type) return toast("Type the kind of inspection"); rememberTyped("type", type); }
+    const link = type === "Move-out" ? $("#link").value : "";
     const include = {}; document.querySelectorAll("#opt .on").forEach(b => include[b.dataset.v] = true);
     localStorage.setItem("inspector", inspector);
     rememberProperty(address);
@@ -205,6 +218,7 @@ async function viewNew() {
     const m = link && await getInsp(link);
     if (m) rooms = m.rooms.map(r => ({ ...r, id: uid(), linkRoom: r.id, items: r.items.map(i => ({ id: uid(), linkItem: i.id, name: i.name, cond: "", note: "", cost: "", photos: [] })) }));
     else rooms = buildRooms({ bedrooms: $("#bedrooms").value, bathrooms: $("#bathrooms").value, include });
+    for (const n of $("#otherrooms").value.split(",").map(x => x.trim()).filter(Boolean)) { rooms.push(customRoom(n)); rememberTyped("room", n); }
     const insp = { id: uid(), app: "ConditionChecklist", version: VERSION, type, address, unit: $("#unit").value.trim(), tenant: $("#tenant").value.trim(),
       inspector, date: $("#date").value, linkedMoveIn: link || "", rooms, createdAt: new Date().toISOString(), status: "open" };
     await putInsp(insp); location.hash = `#/i/${insp.id}`;
@@ -219,10 +233,16 @@ async function viewInspection(id) {
     ${i.rooms.map(r => { const d = itemsDone(r), n = r.items.length;
       return `<div class="card room" onclick="location.hash='#/i/${i.id}/r/${r.id}'" style="cursor:pointer"><div class="grow"><b>${esc(r.name)}</b>
         <div class="prog">${d} / ${n}${r.items.some(x => x.photos.length) ? " · 📷 " + r.items.reduce((a, x) => a + x.photos.length, 0) : ""}</div><div class="bar"><i style="width:${100 * d / n}%"></i></div></div><span>›</span></div>`; }).join("")}
-    <div class="card noprint"><div class="row"><select id="addtype" class="grow">${CHECKLIST.map(t => `<option value="${t.type}">${esc(t.name)}</option>`).join("")}</select><button id="addroom">+ Add room</button></div></div>
+    <div class="card noprint"><div class="row"><select id="addtype" class="grow">${CHECKLIST.map(t => `<option value="${t.type}">${esc(t.name)}</option>`).join("")}<option value="__other">Other (type a name)…</option></select><button id="addroom">+ Add room</button></div>
+      <input id="roomother" list="dl-room" placeholder="Room name, e.g. Den" hidden style="margin-top:6px">${datalist("dl-room", ["Den", "Loft", "Office", "Bonus room", "Hallway", "Balcony", "Patio", "Basement", "Attic", "Storage", ...typed("room")])}</div>
     <div class="row noprint"><button class="primary grow" onclick="location.hash='#/i/${i.id}/report'">Report</button><button id="export">Export .zip</button></div>
     <div class="row noprint" style="margin-top:24px"><button class="danger" id="del">Delete inspection</button></div>`;
+  $("#addtype").onchange = e => { $("#roomother").hidden = e.target.value !== "__other"; if (!$("#roomother").hidden) $("#roomother").focus(); };
   $("#addroom").onclick = async () => {
+    if ($("#addtype").value === "__other") {
+      const n = $("#roomother").value.trim(); if (!n) return toast("Type the room name");
+      rememberTyped("room", n); i.rooms.push(customRoom(n)); await putInsp(i); return viewInspection(id);
+    }
     const t = CHECKLIST.find(x => x.type === $("#addtype").value);
     const same = i.rooms.filter(r => r.type === t.type).length;
     i.rooms.push({ id: uid(), type: t.type, name: same ? `${t.name} ${same + 1}` : t.name, items: t.items.map(name => ({ id: uid(), name, cond: "", note: "", cost: "", photos: [] })) });
@@ -245,31 +265,58 @@ async function viewRoom(id, rid) {
   $("#view").innerHTML = `<div class="card">
     <div class="row noprint" style="margin-bottom:6px"><input id="rname" class="grow" value="${esc(r.name)}"><button id="allgood">All Good</button></div>
     ${r.items.map(it => { const p = prior(it); return `<div class="item" data-id="${it.id}">
-      <h3>${esc(it.name)}</h3>
+      <div class="row"><input class="grow itemname" data-f="name" value="${esc(it.name)}" aria-label="Item name"><button class="icon" data-del="1" title="Remove item">✕</button></div>
       ${p ? `<div class="prior">Move-in: <b>${esc(p.cond || "not checked")}</b>${p.note ? " · " + esc(p.note) : ""}<div class="thumbs">${p.photos.map(ph => `<img data-ph="${ph}">`).join("")}</div></div>` : ""}
-      <div class="seg">${CONDITIONS.map(c => `<button data-c="${c}" class="${it.cond === c ? "on" : ""}">${c}</button>`).join("")}</div>
+      <div class="seg">${CONDITIONS.map(c => `<button data-c="${c}" class="${it.cond === c ? "on" : ""}">${c}</button>`).join("")}<button data-c="__other" class="${it.cond && !CONDITIONS.includes(it.cond) ? "on" : ""}">${it.cond && !CONDITIONS.includes(it.cond) ? esc(it.cond) : "Other…"}</button></div>
+      <input class="condother" list="dl-cond" data-f="cond" placeholder="Type the condition, e.g. Stained / Missing / New" value="${it.cond && !CONDITIONS.includes(it.cond) ? esc(it.cond) : ""}" ${it.cond && !CONDITIONS.includes(it.cond) ? "" : "hidden"} style="margin-top:6px">
       <textarea placeholder="Notes" data-f="note">${esc(it.note)}</textarea>
-      ${i.type === "Move-out" ? `<input placeholder="Cost to correct $" inputmode="decimal" data-f="cost" value="${esc(it.cost)}" style="margin-top:6px">` : ""}
+      ${hasCost(i) ? `<input placeholder="Cost to correct $" inputmode="decimal" data-f="cost" value="${esc(it.cost)}" style="margin-top:6px">` : ""}
       <div class="thumbs">${it.photos.map(ph => `<img data-ph="${ph}" data-own="1">`).join("")}<label class="add">📷<input type="file" accept="image/*" capture="environment" multiple hidden></label></div>
     </div>`; }).join("")}
     <div class="row noprint" style="margin-top:10px">${next ? `<button class="primary grow" onclick="location.hash='#/i/${id}/r/${next.id}'">Next: ${esc(next.name)} ›</button>` : `<button class="primary grow" onclick="location.hash='#/i/${id}'">Done ›</button>`}</div>
-    <div class="row noprint" style="margin-top:10px"><input id="newitem" class="grow" placeholder="Add an item to this room"><button id="additem">+</button></div></div>`;
+    <div class="row noprint" style="margin-top:10px"><input id="newitem" list="dl-item" class="grow" placeholder="Add an item to this room"><button id="additem">+</button></div>
+    ${datalist("dl-item", [...typed("item"), ...CHECKLIST.flatMap(t => t.items)])}${datalist("dl-cond", ["Stained", "Missing", "Broken", "Dirty", "Worn", "Scratched", "Dented", "Not working", "New", ...typed("cond")])}
+    <div class="row noprint" style="margin-top:18px"><button class="danger" id="delroom">Remove this room</button></div></div>`;
   document.querySelectorAll("img[data-ph]").forEach(async im => im.src = await photoURL(im.dataset.ph));
   const save = () => putInsp(i);
   $("#rname").onchange = e => { r.name = e.target.value.trim() || r.name; save(); };
   $("#allgood").onclick = async () => { r.items.forEach(it => it.cond ||= "Good"); await save(); viewRoom(id, rid); };
-  $("#additem").onclick = async () => { const n = $("#newitem").value.trim(); if (!n) return; r.items.push({ id: uid(), name: n, cond: "", note: "", cost: "", photos: [] }); await save(); viewRoom(id, rid); };
+  $("#delroom").onclick = async () => {
+    const ph = r.items.reduce((a, x) => a + x.photos.length, 0);
+    if (!confirm(`Remove "${r.name}"${ph ? ` and its ${ph} photo(s)` : ""}?`)) return;
+    for (const it of r.items) for (const p of it.photos) await delPhoto(p);
+    i.rooms = i.rooms.filter(x => x !== r); await save(); location.hash = `#/i/${id}`;
+  };
+  $("#additem").onclick = async () => { const n = $("#newitem").value.trim(); if (!n) return; rememberTyped("item", n); r.items.push({ id: uid(), name: n, cond: "", note: "", cost: "", photos: [] }); await save(); viewRoom(id, rid); };
   $("#view").onclick = async e => {
     const box = e.target.closest(".item"); if (!box) return;
     const it = r.items.find(x => x.id === box.dataset.id);
+    if (e.target.dataset.del) {
+      if ((it.photos.length || it.note || it.cond) && !confirm(`Remove "${it.name}"${it.photos.length ? ` and its ${it.photos.length} photo(s)` : ""}?`)) return;
+      for (const p of it.photos) await delPhoto(p);
+      r.items = r.items.filter(x => x !== it); await save(); return viewRoom(id, rid);
+    }
+    if (e.target.dataset.c === "__other") { const o = box.querySelector(".condother"); o.hidden = false; o.focus(); return; }
     if (e.target.dataset.c) { it.cond = it.cond === e.target.dataset.c ? "" : e.target.dataset.c;
-      box.querySelectorAll(".seg button").forEach(b => b.classList.toggle("on", b.dataset.c === it.cond)); save(); }
+      const o = box.querySelector(".condother"); o.hidden = true; o.value = "";
+      box.querySelectorAll(".seg button").forEach(b => b.classList.toggle("on", b.dataset.c === it.cond));
+      box.querySelector('[data-c="__other"]').textContent = "Other…"; save(); }
     if (e.target.dataset.ph) showPhoto(e.target.dataset.ph, e.target.dataset.own && (async () => {
       it.photos = it.photos.filter(x => x !== e.target.dataset.ph); await delPhoto(e.target.dataset.ph); await save(); viewRoom(id, rid); }));
   };
   $("#view").oninput = e => { const box = e.target.closest(".item"); if (!box || !e.target.dataset.f) return;
     r.items.find(x => x.id === box.dataset.id)[e.target.dataset.f] = e.target.value; clearTimeout(viewRoom.t); viewRoom.t = setTimeout(save, 400); };
   $("#view").onchange = async e => {
+    if (e.target.classList.contains("condother")) { // typed condition (value already saved by oninput)
+      const box = e.target.closest(".item"), v = e.target.value.trim(); rememberTyped("cond", v);
+      box.querySelectorAll(".seg button").forEach(b => b.classList.toggle("on", !!v && b.dataset.c === "__other"));
+      box.querySelector('[data-c="__other"]').textContent = v || "Other…"; return;
+    }
+    if (e.target.classList.contains("itemname")) {
+      const it = r.items.find(x => x.id === e.target.closest(".item").dataset.id);
+      if (!e.target.value.trim()) e.target.value = it.name = "Item";
+      rememberTyped("item", e.target.value.trim()); save(); return;
+    }
     if (e.target.type !== "file") return;
     const box = e.target.closest(".item"), it = r.items.find(x => x.id === box.dataset.id);
     for (const f of e.target.files) {
@@ -297,7 +344,7 @@ async function viewReport(id) {
   const total = allItems(i).reduce((a, x) => a + (parseFloat(x.item.cost) || 0), 0);
   $("#view").innerHTML = `<div class="card"><h2 style="margin:0">${esc(i.type)} Inspection</h2>
     <p>${esc(i.address)}${i.unit ? ", Unit " + esc(i.unit) : ""}<br>Tenant: ${esc(i.tenant)}<br>Date: ${esc(i.date)} · Inspected by: ${esc(i.inspector)}${m ? `<br>Move-in inspection: ${esc(m.date)}` : ""}</p>
-    ${i.type === "Move-out" ? `<p><b>Total cost to correct: $${total.toFixed(2)}</b></p>` : ""}
+    ${hasCost(i) ? `<p><b>Total cost to correct: $${total.toFixed(2)}</b></p>` : ""}
     <div class="row noprint"><button class="primary" onclick="print()">Print / Save as PDF</button></div></div>
     ${i.rooms.map(r => `<div class="card"><h3>${esc(r.name)}</h3>${r.items.map(it => { const p = prior(it); return `<div class="item"><b>${esc(it.name)}</b>: ${esc(it.cond || "—")}
       ${p ? ` <span class="muted">(move-in: ${esc(p.cond || "—")})</span>` : ""}${it.note ? `<div>${esc(it.note)}</div>` : ""}${it.cost ? `<div>Cost: $${esc(it.cost)}</div>` : ""}
