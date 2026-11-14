@@ -1,5 +1,5 @@
 // Offline: cache the app shell; bump CACHE when any file changes so phones pick up the update.
-const CACHE = "cc-v0.3";
+const CACHE = "cc-v0.3.1";
 const FILES = ["./", "index.html", "styles.css", "app.js", "checklist.js", "jszip.min.js",
   "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));

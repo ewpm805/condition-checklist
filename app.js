@@ -1,6 +1,6 @@
 // ConditionChecklist PWA - Phase 1: inspections, rooms, items, photos; everything offline in IndexedDB.
 "use strict";
-const VERSION = "0.3";
+const VERSION = "0.3.1";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -160,7 +160,8 @@ async function viewNew() {
   $("#view").innerHTML = `<div class="card">
     <label>Type</label><div class="seg" id="type"><button data-v="Move-in" class="on" style="background:var(--accent);color:#fff">Move-in</button><button data-v="Move-out">Move-out</button></div>
     <label>Property address</label>
-    <select id="addrpick"><option value="">${props.length ? "Select a property…" : "No saved properties yet - type below"}</option>${props.map(a => `<option>${esc(a)}</option>`).join("")}</select>
+    <select id="addrpick"><option value="">${props.length ? "Select a property…" : "No property list yet - type below"}</option>${props.map(a => `<option>${esc(a)}</option>`).join("")}</select>
+    ${cloud() ? "" : `<p class="muted" style="margin:4px 0">Company list not connected on this phone. Open the link in the ConditionChecklist Sheet (tab Connect) once. <a href="#/settings">Settings</a></p>`}
     <input id="address" list="addrlist" placeholder="…or type the address" autocomplete="street-address" style="margin-top:6px">
     <datalist id="addrlist">${props.map(a => `<option value="${esc(a)}">`).join("")}</datalist>
     <label>Unit (optional)</label><input id="unit">
