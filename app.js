@@ -1,6 +1,6 @@
 // ConditionChecklist PWA - Phase 1: inspections, rooms, items, photos; everything offline in IndexedDB.
 "use strict";
-const VERSION = "0.2";
+const VERSION = "0.3";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -55,27 +55,64 @@ async function compress(file) {
   const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.8));
   return { blob, w: c.width, h: c.height };
 }
-// Property list = the phone's saved list (Settings) + every address used before, sorted, no duplicates.
-// Kept on the phone only: the app's code is public on GitHub, so addresses are never put in the code.
+// Property list = company list (private Google Sheet on ewpm805, via Apps Script, cached on the phone for offline)
+// + the phone's own list (Settings) + every address used before. Nothing private is in this public code:
+// the Apps Script id + key arrive once per phone through a "connect" link (#/connect/<id>/<key>).
 function savedProps() { try { return JSON.parse(localStorage.getItem("properties") || "[]"); } catch { return []; } }
+function companyProps() { try { return JSON.parse(localStorage.getItem("companyProps") || "[]"); } catch { return []; } }
+function cloud() { try { return JSON.parse(localStorage.getItem("cloud") || "null"); } catch { return null; } }
+async function callCloud(action, data = {}) {
+  const c = cloud(); if (!c) throw new Error("not connected");
+  const r = await fetch(`https://script.google.com/macros/s/${c.id}/exec`, { method: "POST",
+    headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ key: c.key, action, ...data }) });
+  const j = await r.json(); if (j.error) throw new Error(j.error); return j;
+}
+async function refreshCompany(force) {
+  if (!cloud() || !navigator.onLine) return false;
+  const last = +localStorage.getItem("companyAt") || 0;
+  if (!force && Date.now() - last < 6 * 3600e3) return false;
+  const j = await callCloud("properties");
+  localStorage.setItem("companyProps", JSON.stringify(j.properties)); localStorage.setItem("companyAt", Date.now());
+  return j.properties.length;
+}
+function tenantFor(address) {
+  const m = companyProps().find(p => p.a.toLowerCase() === (address || "").trim().toLowerCase()); return m ? m.t : "";
+}
 function propertyList(inspections = []) {
   const seen = new Map();
-  for (const a of [...savedProps(), ...inspections.map(i => i.address)]) {
+  for (const a of [...companyProps().map(p => p.a), ...savedProps(), ...inspections.map(i => i.address)]) {
     const t = (a || "").trim(); if (t && !seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t);
   }
   return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
 }
 function rememberProperty(a) {
+  if (companyProps().some(p => p.a.toLowerCase() === a.toLowerCase())) return;
   const list = savedProps();
   if (!list.some(x => x.toLowerCase() === a.toLowerCase())) { list.push(a); localStorage.setItem("properties", JSON.stringify(list)); }
+}
+async function connect(id, key) {
+  localStorage.setItem("cloud", JSON.stringify({ id, key }));
+  history.replaceState(null, "", location.pathname + "#/settings"); // don't leave the key in the address bar
+  try { const n = await refreshCompany(true); toast(`Connected - ${n} company properties loaded`); }
+  catch (e) { localStorage.removeItem("cloud"); toast("Connect failed: " + e.message); }
+  route();
 }
 
 async function viewSettings() {
   setHeader("Settings", "#/");
-  $("#view").innerHTML = `<div class="card"><b>Property list</b>
-    <p class="muted">One address per line. These show in "Select a property". Saved on this phone only. Addresses you type in an inspection are added automatically.</p>
-    <textarea id="plist" style="min-height:240px">${esc(savedProps().join("\n"))}</textarea>
+  const c = cloud(), at = +localStorage.getItem("companyAt");
+  $("#view").innerHTML = `<div class="card"><b>Company property list</b>
+    <p class="muted">${c ? `Connected ✓ - ${companyProps().length} properties${at ? ", updated " + new Date(at).toLocaleString() : ""}. Works offline; refreshes itself when online.`
+      : "Not connected. Open the connect link (in the ConditionChecklist Google Sheet, tab Connect) on this phone once."}</p>
+    ${c ? `<div class="row"><button class="grow" id="crefresh">Refresh now</button></div>` : ""}</div>
+    <div class="card"><b>My extra properties</b>
+    <p class="muted">One address per line, for properties not in the company list. Saved on this phone only. Addresses you type in an inspection are added automatically.</p>
+    <textarea id="plist" style="min-height:160px">${esc(savedProps().join("\n"))}</textarea>
     <div class="row" style="margin-top:8px"><button class="primary grow" id="psave">Save list</button></div></div>`;
+  if (c) $("#crefresh").onclick = async () => {
+    try { const n = await refreshCompany(true); toast(n === false ? "Offline - try later" : `${n} properties loaded`); viewSettings(); }
+    catch (e) { toast("Refresh failed: " + e.message); }
+  };
   $("#psave").onclick = () => {
     const list = [...new Set($("#plist").value.split(/\r?\n/).map(s => s.trim()).filter(Boolean))];
     localStorage.setItem("properties", JSON.stringify(list)); toast(`${list.length} properties saved`); location.hash = "#/";
@@ -138,7 +175,9 @@ async function viewNew() {
     <div id="linkbox" hidden><label>Compare with move-in inspection</label><select id="link"><option value="">(none)</option>
       ${ins.map(i => `<option value="${i.id}">${esc(short(i.address))} · ${esc(i.date)} · ${esc(i.tenant || "")}</option>`).join("")}</select></div>
     <div class="row" style="margin-top:14px"><button class="primary grow" id="create">Start inspection</button></div></div>`;
-  $("#addrpick").onchange = e => { if (e.target.value) $("#address").value = e.target.value; };
+  const fillTenant = () => { const t = tenantFor($("#address").value); if (t && !$("#tenant").value.trim()) $("#tenant").value = t; };
+  $("#addrpick").onchange = e => { if (e.target.value) { $("#address").value = e.target.value; fillTenant(); } };
+  $("#address").onchange = fillTenant;
   $("#inspsel").onchange = e => { const other = e.target.value === "__other"; $("#inspector").hidden = !other; if (other) $("#inspector").focus(); };
   const paint = () => document.querySelectorAll("#opt button").forEach(b => b.style.cssText = b.classList.contains("on") ? "background:var(--accent);color:#fff" : "");
   paint();
@@ -287,6 +326,7 @@ async function route() {
   window.scrollTo(0, 0);
   if (p[0] === "new") return viewNew();
   if (p[0] === "settings") return viewSettings();
+  if (p[0] === "connect" && p[1] && p[2]) return connect(p[1], p[2]);
   if (p[0] === "i" && p[2] === "r") return viewRoom(p[1], p[3]);
   if (p[0] === "i" && p[2] === "report") return viewReport(p[1]);
   if (p[0] === "i") return viewInspection(p[1]);
@@ -295,5 +335,6 @@ async function route() {
 function net() { $("#net").textContent = navigator.onLine ? "● online" : "○ offline"; }
 addEventListener("hashchange", route); addEventListener("online", net); addEventListener("offline", net);
 net(); route();
+refreshCompany().catch(() => {}); addEventListener("online", () => refreshCompany().catch(() => {}));
 if ("serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
 navigator.storage?.persist?.(); // ask the browser not to evict saved inspections/photos
