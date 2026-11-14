@@ -1,6 +1,6 @@
 // ConditionChecklist PWA - Phase 1: inspections, rooms, items, photos; everything offline in IndexedDB.
 "use strict";
-const VERSION = "0.4.1";
+const VERSION = "0.4.2";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -235,7 +235,8 @@ async function viewInspection(id) {
   const i = await getInsp(id); if (!i) return location.hash = "#/";
   setHeader(`${i.type} · ${short(i.address)}`, "#/");
   $("#view").innerHTML = `<div class="card"><div class="row"><span class="badge ${i.type === "Move-in" ? "in" : "out"}">${esc(i.type)}</span><b class="grow">${esc(i.address)}</b></div>
-      <div class="muted">${esc(i.date)} · ${esc(i.tenant || "no tenant name")} · by ${esc(i.inspector || "?")}${i.linkedMoveIn ? " · compared with move-in" : ""}</div></div>
+      <div class="muted">${esc(i.date)} · ${esc(i.tenant || "no tenant name")} · by ${esc(i.inspector || "?")}${i.linkedMoveIn ? " · compared with move-in" : ""}</div>
+      <div class="row noprint" style="margin-top:8px"><button class="grow" onclick="location.hash='#/i/${i.id}/report'">Report</button><button class="grow" id="export2">Export .zip</button></div></div>
     ${i.rooms.map(r => { const d = itemsDone(r), n = r.items.length;
       return `<div class="card room" onclick="location.hash='#/i/${i.id}/r/${r.id}'" style="cursor:pointer"><div class="grow"><b>${esc(r.name)}</b>
         <div class="prog">${d} / ${n}${r.items.some(x => x.photos.length) ? " · 📷 " + r.items.reduce((a, x) => a + x.photos.length, 0) : ""}</div><div class="bar"><i style="width:${100 * d / n}%"></i></div></div><span>›</span></div>`; }).join("")}
@@ -254,7 +255,7 @@ async function viewInspection(id) {
     i.rooms.push({ id: uid(), type: t.type, name: same ? `${t.name} ${same + 1}` : t.name, items: t.items.map(name => ({ id: uid(), name, cond: "", note: "", cost: "", photos: [] })) });
     await putInsp(i); viewInspection(id);
   };
-  $("#export").onclick = () => exportZip(i);
+  $("#export").onclick = $("#export2").onclick = () => exportZip(i);
   $("#del").onclick = async () => {
     if (prompt(`Type DELETE to remove this inspection and its photos from this phone.`) !== "DELETE") return;
     for (const p of await photosOf(i.id)) await delPhoto(p.id);
@@ -351,11 +352,12 @@ async function viewReport(id) {
   $("#view").innerHTML = `<div class="card"><h2 style="margin:0">${esc(i.type)} Inspection</h2>
     <p>${esc(i.address)}${i.unit ? ", Unit " + esc(i.unit) : ""}<br>Tenant: ${esc(i.tenant)}<br>Date: ${esc(i.date)} · Inspected by: ${esc(i.inspector)}${m ? `<br>Move-in inspection: ${esc(m.date)}` : ""}</p>
     ${hasCost(i) ? `<p><b>Total cost to correct: $${total.toFixed(2)}</b></p>` : ""}
-    <div class="row noprint"><button class="primary" onclick="print()">Print / Save as PDF</button></div></div>
+    <div class="row noprint"><button class="primary" onclick="print()">Print / Save as PDF</button><button id="rexport">Export .zip</button></div></div>
     ${i.rooms.map(r => `<div class="card"><h3>${esc(r.name)}</h3>${r.items.map(it => { const p = prior(it); return `<div class="item"><b>${esc(it.name)}</b>: ${esc(it.cond || "—")}
       ${p ? ` <span class="muted">(move-in: ${esc(p.cond || "—")})</span>` : ""}${it.note ? `<div>${esc(it.note)}</div>` : ""}${it.cost ? `<div>Cost: $${esc(it.cost)}</div>` : ""}
       <div class="thumbs">${it.photos.map(ph => `<img data-ph="${ph}">`).join("")}</div></div>`; }).join("")}</div>`).join("")}`;
   document.querySelectorAll("img[data-ph]").forEach(async im => im.src = await photoURL(im.dataset.ph));
+  $("#rexport").onclick = () => exportZip(i);
 }
 
 // one .zip per inspection: inspection.json + photos/<room>/<item>-n.jpg (Phase 2 uploads the same to Google Drive)
