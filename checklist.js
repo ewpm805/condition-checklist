@@ -34,3 +34,5 @@ const CHECKLIST = [
     "Garage remote", "Parking permit"] },
 ];
 const CONDITIONS = ["Good", "Fair", "Poor", "Damaged", "N/A"];
+// "Inspected by" choices (same team as DutySheet); "Other..." lets you type a name. Last choice is remembered.
+const STAFF = ["Edward", "Allyson", "Jesse", "Winnie"];

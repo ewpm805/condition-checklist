@@ -1,6 +1,6 @@
 // ConditionChecklist PWA - Phase 1: inspections, rooms, items, photos; everything offline in IndexedDB.
 "use strict";
-const VERSION = "0.1";
+const VERSION = "0.2";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -55,6 +55,33 @@ async function compress(file) {
   const blob = await new Promise(r => c.toBlob(r, "image/jpeg", 0.8));
   return { blob, w: c.width, h: c.height };
 }
+// Property list = the phone's saved list (Settings) + every address used before, sorted, no duplicates.
+// Kept on the phone only: the app's code is public on GitHub, so addresses are never put in the code.
+function savedProps() { try { return JSON.parse(localStorage.getItem("properties") || "[]"); } catch { return []; } }
+function propertyList(inspections = []) {
+  const seen = new Map();
+  for (const a of [...savedProps(), ...inspections.map(i => i.address)]) {
+    const t = (a || "").trim(); if (t && !seen.has(t.toLowerCase())) seen.set(t.toLowerCase(), t);
+  }
+  return [...seen.values()].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+function rememberProperty(a) {
+  const list = savedProps();
+  if (!list.some(x => x.toLowerCase() === a.toLowerCase())) { list.push(a); localStorage.setItem("properties", JSON.stringify(list)); }
+}
+
+async function viewSettings() {
+  setHeader("Settings", "#/");
+  $("#view").innerHTML = `<div class="card"><b>Property list</b>
+    <p class="muted">One address per line. These show in "Select a property". Saved on this phone only. Addresses you type in an inspection are added automatically.</p>
+    <textarea id="plist" style="min-height:240px">${esc(savedProps().join("\n"))}</textarea>
+    <div class="row" style="margin-top:8px"><button class="primary grow" id="psave">Save list</button></div></div>`;
+  $("#psave").onclick = () => {
+    const list = [...new Set($("#plist").value.split(/\r?\n/).map(s => s.trim()).filter(Boolean))];
+    localStorage.setItem("properties", JSON.stringify(list)); toast(`${list.length} properties saved`); location.hash = "#/";
+  };
+}
+
 function itemsDone(room) { return room.items.filter(i => i.cond).length; }
 function allItems(insp) { return insp.rooms.flatMap(r => r.items.map(i => ({ room: r, item: i }))); }
 function short(addr) { return (addr || "").split(",")[0]; }
@@ -85,19 +112,25 @@ async function viewList() {
         <div class="muted">${esc(i.unit ? "Unit " + i.unit + " · " : "")}${esc(i.tenant || "")}</div>
         <div class="prog">${done} / ${all.length} items checked</div><div class="bar"><i style="width:${all.length ? 100 * done / all.length : 0}%"></i></div></div>`;
     }).join("")}
-    <p class="muted" style="text-align:center">v${VERSION}</p>`;
+    <p class="muted" style="text-align:center"><a href="#/settings" style="color:inherit">Settings (property list)</a> · v${VERSION}</p>`;
 }
 
 async function viewNew() {
   setHeader("New inspection", "#/");
-  const ins = (await getAll()).filter(i => i.type === "Move-in");
+  const all = await getAll(), ins = all.filter(i => i.type === "Move-in");
   const opt = CHECKLIST.filter(t => t.optional);
+  const props = propertyList(all), lastInsp = localStorage.getItem("inspector") || "";
   $("#view").innerHTML = `<div class="card">
     <label>Type</label><div class="seg" id="type"><button data-v="Move-in" class="on" style="background:var(--accent);color:#fff">Move-in</button><button data-v="Move-out">Move-out</button></div>
-    <label>Property address</label><input id="address" placeholder="401 Hermosa Way, Oxnard, CA 93036" autocomplete="street-address">
+    <label>Property address</label>
+    <select id="addrpick"><option value="">${props.length ? "Select a property…" : "No saved properties yet - type below"}</option>${props.map(a => `<option>${esc(a)}</option>`).join("")}</select>
+    <input id="address" list="addrlist" placeholder="…or type the address" autocomplete="street-address" style="margin-top:6px">
+    <datalist id="addrlist">${props.map(a => `<option value="${esc(a)}">`).join("")}</datalist>
     <label>Unit (optional)</label><input id="unit">
     <label>Tenant name(s)</label><input id="tenant">
-    <label>Inspected by</label><input id="inspector" value="${esc(localStorage.getItem("inspector") || "")}">
+    <label>Inspected by</label>
+    <select id="inspsel">${STAFF.map(s => `<option ${s === lastInsp ? "selected" : ""}>${esc(s)}</option>`).join("")}<option value="__other" ${lastInsp && !STAFF.includes(lastInsp) ? "selected" : ""}>Other…</option></select>
+    <input id="inspector" placeholder="Name" value="${esc(lastInsp && !STAFF.includes(lastInsp) ? lastInsp : "")}" ${lastInsp && !STAFF.includes(lastInsp) ? "" : "hidden"} style="margin-top:6px">
     <label>Date</label><input id="date" type="date" value="${today()}">
     <div class="row"><div class="grow"><label>Bedrooms</label><input id="bedrooms" type="number" min="0" max="10" value="3" inputmode="numeric"></div>
     <div class="grow"><label>Bathrooms</label><input id="bathrooms" type="number" min="0" max="10" value="2" inputmode="numeric"></div></div>
@@ -105,6 +138,8 @@ async function viewNew() {
     <div id="linkbox" hidden><label>Compare with move-in inspection</label><select id="link"><option value="">(none)</option>
       ${ins.map(i => `<option value="${i.id}">${esc(short(i.address))} · ${esc(i.date)} · ${esc(i.tenant || "")}</option>`).join("")}</select></div>
     <div class="row" style="margin-top:14px"><button class="primary grow" id="create">Start inspection</button></div></div>`;
+  $("#addrpick").onchange = e => { if (e.target.value) $("#address").value = e.target.value; };
+  $("#inspsel").onchange = e => { const other = e.target.value === "__other"; $("#inspector").hidden = !other; if (other) $("#inspector").focus(); };
   const paint = () => document.querySelectorAll("#opt button").forEach(b => b.style.cssText = b.classList.contains("on") ? "background:var(--accent);color:#fff" : "");
   paint();
   $("#opt").onclick = e => { if (e.target.dataset.v) { e.target.classList.toggle("on"); paint(); } };
@@ -119,16 +154,19 @@ async function viewNew() {
     $("#bedrooms").value = m.rooms.filter(r => r.type === "bedroom").length; $("#bathrooms").value = m.rooms.filter(r => r.type === "bathroom").length;
   };
   $("#create").onclick = async () => {
-    const address = $("#address").value.trim(); if (!address) return toast("Enter the property address");
+    const address = $("#address").value.trim(); if (!address) return toast("Select or type the property address");
+    const inspector = $("#inspsel").value === "__other" ? $("#inspector").value.trim() : $("#inspsel").value;
+    if (!inspector) return toast("Enter who is inspecting");
     const type = $("#type .on").dataset.v, link = type === "Move-out" ? $("#link").value : "";
     const include = {}; document.querySelectorAll("#opt .on").forEach(b => include[b.dataset.v] = true);
-    localStorage.setItem("inspector", $("#inspector").value.trim());
+    localStorage.setItem("inspector", inspector);
+    rememberProperty(address);
     let rooms;
     const m = link && await getInsp(link);
     if (m) rooms = m.rooms.map(r => ({ ...r, id: uid(), linkRoom: r.id, items: r.items.map(i => ({ id: uid(), linkItem: i.id, name: i.name, cond: "", note: "", cost: "", photos: [] })) }));
     else rooms = buildRooms({ bedrooms: $("#bedrooms").value, bathrooms: $("#bathrooms").value, include });
     const insp = { id: uid(), app: "ConditionChecklist", version: VERSION, type, address, unit: $("#unit").value.trim(), tenant: $("#tenant").value.trim(),
-      inspector: $("#inspector").value.trim(), date: $("#date").value, linkedMoveIn: link || "", rooms, createdAt: new Date().toISOString(), status: "open" };
+      inspector, date: $("#date").value, linkedMoveIn: link || "", rooms, createdAt: new Date().toISOString(), status: "open" };
     await putInsp(insp); location.hash = `#/i/${insp.id}`;
   };
 }
@@ -248,6 +286,7 @@ async function route() {
   const p = location.hash.replace(/^#\/?/, "").split("/");
   window.scrollTo(0, 0);
   if (p[0] === "new") return viewNew();
+  if (p[0] === "settings") return viewSettings();
   if (p[0] === "i" && p[2] === "r") return viewRoom(p[1], p[3]);
   if (p[0] === "i" && p[2] === "report") return viewReport(p[1]);
   if (p[0] === "i") return viewInspection(p[1]);
