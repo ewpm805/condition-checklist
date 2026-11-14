@@ -1,6 +1,6 @@
 // ConditionChecklist PWA - Phase 1: inspections, rooms, items, photos; everything offline in IndexedDB.
 "use strict";
-const VERSION = "0.4";
+const VERSION = "0.4.1";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -103,12 +103,18 @@ async function viewSettings() {
   const c = cloud(), at = +localStorage.getItem("companyAt");
   $("#view").innerHTML = `<div class="card"><b>Company property list</b>
     <p class="muted">${c ? `Connected ✓ - ${companyProps().length} properties${at ? ", updated " + new Date(at).toLocaleString() : ""}. Works offline; refreshes itself when online.`
-      : "Not connected. Open the connect link (in the ConditionChecklist Google Sheet, tab Connect) on this phone once."}</p>
-    ${c ? `<div class="row"><button class="grow" id="crefresh">Refresh now</button></div>` : ""}</div>
+      : "Not connected. Copy the connect link from the ConditionChecklist Google Sheet (tab Connect, cell B3), paste it below and tap Connect. (On Android you can also just tap the link.)"}</p>
+    ${c ? `<div class="row"><button class="grow" id="crefresh">Refresh now</button></div>`
+      : `<input id="clink" placeholder="Paste the connect link here" autocomplete="off"><div class="row" style="margin-top:8px"><button class="primary grow" id="cgo">Connect</button></div>`}</div>
     <div class="card"><b>My extra properties</b>
     <p class="muted">One address per line, for properties not in the company list. Saved on this phone only. Addresses you type in an inspection are added automatically.</p>
     <textarea id="plist" style="min-height:160px">${esc(savedProps().join("\n"))}</textarea>
     <div class="row" style="margin-top:8px"><button class="primary grow" id="psave">Save list</button></div></div>`;
+  if (!c) $("#cgo").onclick = () => {
+    const m = $("#clink").value.trim().match(/#\/connect\/([\w-]+)\/(\w+)/);
+    if (!m) return toast("That is not the connect link - copy cell B3 of the Connect tab");
+    connect(m[1], m[2]);
+  };
   if (c) $("#crefresh").onclick = async () => {
     try { const n = await refreshCompany(true); toast(n === false ? "Offline - try later" : `${n} properties loaded`); viewSettings(); }
     catch (e) { toast("Refresh failed: " + e.message); }
