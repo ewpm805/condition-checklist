@@ -1,0 +1,36 @@
+// ConditionChecklist - item template (from Buildium task #3149642 "main move out checklist.pdf",
+// HUD Move-In/Move-Out Inspection Form + team additions). Same items for move-in and move-out.
+// Edit this file to change items; rooms marked repeat:true are created N times (bedrooms/baths).
+const WIN = "Windows / Coverings / Screens / Blinds";
+const CHECKLIST = [
+  { type: "entrance", name: "Entrance / Halls", items: ["Steps and landings", "Handrails", "Doors",
+    "Hardware / Locks", "Floors / Coverings", "Walls / Coverings", "Ceilings", WIN, "Lighting",
+    "Electrical outlets", "Closets", "Fire alarms / Equipment"] },
+  { type: "living", name: "Living Room", items: ["Floor / Coverings", "Walls / Coverings", "Ceiling",
+    WIN, "Lighting", "Electrical outlets"] },
+  { type: "dining", name: "Dining Room", optional: true, items: ["Floor / Coverings",
+    "Walls / Coverings", "Ceiling", WIN, "Lighting", "Electrical outlets"] },
+  { type: "kitchen", name: "Kitchen", items: ["Range", "Refrigerator", "Microwave", "Dishwasher",
+    "Garbage disposal", "Sink / Faucets", "Floor / Coverings", "Walls / Coverings", "Ceiling", WIN,
+    "Lighting", "Electrical outlets", "Cabinets", "Closets / Pantry", "Exhaust fan",
+    "Fire alarms / Equipment"] },
+  { type: "bedroom", name: "Bedroom", repeat: "bedrooms", items: ["Doors and locks",
+    "Floor / Coverings", "Walls / Coverings", "Ceiling", WIN, "Closets", "Lighting",
+    "Electrical outlets"] },
+  { type: "bathroom", name: "Bathroom", repeat: "bathrooms", items: ["Sink / Faucets", "Shower / Tub",
+    "Curtain rack / Door", "Towel rack", "Toilet", "Doors / Locks", "Floor / Coverings",
+    "Walls / Coverings", "Ceiling", WIN, "Closets", "Cabinets", "Exhaust fan", "Lighting",
+    "Electrical outlets", "Water pressure and hot water"] },
+  { type: "laundry", name: "Laundry", optional: true, items: ["Washer / hookups", "Dryer / vent",
+    "Floor / Walls / Ceiling", "Lighting", "Electrical outlets"] },
+  { type: "garage", name: "Garage", optional: true, items: ["Floor / Walls / Ceiling",
+    "Shelves / Rods", "Lighting", "Garage door / Opener"] },
+  { type: "exterior", name: "Exterior / Yard", optional: true, items: ["Front door / Porch",
+    "Patio / Deck", "Yard / Landscaping", "Fences / Gates", "Exterior lights"] },
+  { type: "other", name: "Other Equipment", items: ["Heating equipment", "Air conditioning unit",
+    "Water heater", "Smoke / Fire / CO alarms", "Thermostat", "Door bell", "Door stops",
+    "Fixtures / Bulbs / Switches / Timers"] },
+  { type: "keys", name: "Keys & Items", items: ["Keys", "Mailbox keys", "Pool key",
+    "Garage remote", "Parking permit"] },
+];
+const CONDITIONS = ["Good", "Fair", "Poor", "Damaged", "N/A"];
